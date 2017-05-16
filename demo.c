@@ -24,6 +24,7 @@
 void check_status_ok(TF_Status* status, char* step) {
     if (TF_GetCode(status) != TF_OK) {
         fprintf(stderr, "Error at step \"%s\", status is: %u\n", step, TF_GetCode(status));
+        fprintf(stderr, "Error message: %s\n", TF_Message(status));
         exit(EXIT_FAILURE);
     } else {
         printf("%s\n", step);
@@ -55,7 +56,6 @@ void check_result_ok(enum _nj_result result, char* step) {
  *     input file - any file
  */
 unsigned long file_length(FILE* file) {
-    // From http://stackoverflow.com/a/238609/738968
     fseek(file, 0, SEEK_END);
     unsigned long length = ftell(file);
     fseek(file, 0, SEEK_SET);
@@ -86,9 +86,9 @@ char* load_file(FILE* file, unsigned long length) {
  * 1. Initialize TensorFlow session
  * 2. Read in the previosly exported graph
  * 3. Read tensor from image
- * 5. Run the image through the model
- * 6. Print top labels
- * 7. Close session to release resources
+ * 4. Run the image through the model
+ * 5. Print top labels
+ * 6. Close session to release resources
  *
  * Note: the input image is not automatically resized. A jpg image is expected,
  * with the same dimensions of the images in the trained model.
@@ -108,6 +108,11 @@ int main(int argc, char* argv[]) {
     char* input_labels = argv[2];
     char* input_image = argv[3];
 
+    // int input_width = 299;
+    // int input_height = 299;
+    // int input_mean = 0;
+    // int input_std = 255;
+
     // 1. Initialize TensorFlow session
     TF_Graph* graph = TF_NewGraph();
     TF_SessionOptions* session_opts = TF_NewSessionOptions();
@@ -126,12 +131,9 @@ int main(int argc, char* argv[]) {
     TF_Buffer* graph_def = TF_NewBufferFromString(pb_file_buffer, pb_file_length);
     TF_ImportGraphDefOptions* graph_opts = TF_NewImportGraphDefOptions();
     TF_GraphImportGraphDef(graph, graph_def, graph_opts, status);
-    check_status_ok(status, "Loading .pb graph");
+    check_status_ok(status, "Loading of .pb graph");
 
     // 3. Read tensor from image
-    // https://github.com/tensorflow/tensorflow/blob/master/tensorflow/examples/label_image/main.cc#L87
-    // https://medium.com/jim-fleming/loading-tensorflow-graphs-via-host-languages-be10fd81876f
-    // https://github.com/tensorflow/tensorflow/blob/master/tensorflow/c/c_api.h#L226
     njInit();
     FILE* image_file = fopen(input_image, "rb");
     if (!image_file) {
@@ -141,9 +143,43 @@ int main(int argc, char* argv[]) {
     unsigned long image_file_length = file_length(image_file);
     char* image_file_buffer = load_file(image_file, image_file_length);
     nj_result_t result = njDecode(image_file_buffer, image_file_length);
-    check_result_ok(result, "Loading image");
+    check_result_ok(result, "Loading of test image");
+    unsigned char* image_data = njGetImage();
+    int image_data_length = njGetImageSize();
+    // The convention for image ops in TensorFlow is that all images are expected
+    // to be in batches, so that they're four-dimensional arrays with indices of
+    // [batch, height, width, channel].
+    int ndims = 4, channels_in_image = 3;
+    int64_t dims[] = {1, (long) njGetHeight(), (long) njGetWidth(), channels_in_image};
+    TF_Tensor* tensor = TF_NewTensor(TF_FLOAT, dims, ndims, image_data, image_data_length, NULL, NULL);
 
-    // 7. Close session to release resources
+    // 4. Run the image through the model
+    TF_Output output1;
+    output1.oper = TF_GraphOperationByName(graph, "input");
+    output1.index = 0;
+    TF_Output* inputs = {&output1};
+    TF_Tensor* const* input_values = {&tensor};
+
+    const TF_Operation* target_op = TF_GraphOperationByName(graph, "InceptionV3/Predictions/Reshape_1");
+    TF_Output output2;
+    output2.oper = (void *) target_op;
+    output2.index = 0;
+    TF_Output* outputs = {&output2};
+    TF_Tensor* output_values;
+
+    const TF_Operation* const* target_opers = {&target_op};
+    TF_SessionRun(
+        session,
+        NULL,
+        inputs, input_values, 1,
+        outputs, &output_values, 1,
+        target_opers, 1,
+        NULL,
+        status
+    );
+    check_status_ok(status, "Running of the image through the model");
+
+    // 6. Close session to release resources
     fclose(pb_file);
     free(pb_file_buffer);
     njDone(); // resets NanoJPEG's internal state and frees memory

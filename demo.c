@@ -80,7 +80,7 @@ char* load_graph_def(FILE* file, unsigned long length) {
  */
 int main(int argc, char* argv[]) {
     if (argc != 4) {
-        fprintf(stderr, "3 arguments expected, %d received\n", argc);
+        fprintf(stderr, "3 arguments expected, %d received\n", argc - 1);
         exit(EXIT_FAILURE);
     }
 

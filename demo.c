@@ -1,14 +1,17 @@
 /*
  * demo.c
- * To compile: gcc demo.c -ltensorflow
- * To run: ./a.out ./data/inception_v3_2016_08_28_frozen.pb ./data/imagenet_slim_labels.txt ./data/img.jpg
+ * To compile: gcc nanojpeg.c demo.c -ltensorflow
+ * To run: ./a.out data/inception_v3_2016_08_28_frozen.pb data/imagenet_slim_labels.txt data/grace_hopper.jpg
  *
  * author: Miguel Jiménez
  * date: May 9, 2017
  */
+#define _NJ_INCLUDE_HEADER_ONLY
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <tensorflow/c/c_api.h>
+#include "nanojpeg.c"
 
 /*
  * check_status_ok
@@ -21,6 +24,23 @@
 void check_status_ok(TF_Status* status, char* step) {
     if (TF_GetCode(status) != TF_OK) {
         fprintf(stderr, "Error at step \"%s\", status is: %u\n", step, TF_GetCode(status));
+        exit(EXIT_FAILURE);
+    } else {
+        printf("%s\n", step);
+    }
+}
+
+/*
+ * check_result_ok
+ * description:
+ * Verifies result OK after decoding an image.
+ * parameters:
+ *     input result - the nanojpeg result
+ *     input step   - a description of operation performed
+ */
+void check_result_ok(enum _nj_result result, char* step) {
+    if (result != NJ_OK) {
+        fprintf(stderr, "Error at step \"%s\", status is: %u\n", step, result);
         exit(EXIT_FAILURE);
     } else {
         printf("%s\n", step);
@@ -43,14 +63,14 @@ unsigned long file_length(FILE* file) {
 }
 
 /*
- * load_graph_def
+ * load_file
  * description:
  * Loads a binary buffer from the given file
  * parameters:
- *     input file  - a binary file containing a TensorFlow graph
+ *     input file  - a binary file
  *     inut length - the length of the file
  */
-char* load_graph_def(FILE* file, unsigned long length) {
+char* load_file(FILE* file, unsigned long length) {
     char* buffer;
     buffer = (char *) malloc(length + 1);
     if (!buffer) {
@@ -101,9 +121,9 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Could not read graph file \"%s\"\n", input_graph);
         exit(EXIT_FAILURE);
     }
-    unsigned long length = file_length(pb_file);
-    char* buffer = load_graph_def(pb_file, length);
-    TF_Buffer* graph_def = TF_NewBufferFromString(buffer, length);
+    unsigned long pb_file_length = file_length(pb_file);
+    char* pb_file_buffer = load_file(pb_file, pb_file_length);
+    TF_Buffer* graph_def = TF_NewBufferFromString(pb_file_buffer, pb_file_length);
     TF_ImportGraphDefOptions* graph_opts = TF_NewImportGraphDefOptions();
     TF_GraphImportGraphDef(graph, graph_def, graph_opts, status);
     check_status_ok(status, "Loading .pb graph");
@@ -112,11 +132,20 @@ int main(int argc, char* argv[]) {
     // https://github.com/tensorflow/tensorflow/blob/master/tensorflow/examples/label_image/main.cc#L87
     // https://medium.com/jim-fleming/loading-tensorflow-graphs-via-host-languages-be10fd81876f
     // https://github.com/tensorflow/tensorflow/blob/master/tensorflow/c/c_api.h#L226
-
-    // ...
+    njInit();
+    FILE* image_file = fopen(input_image, "rb");
+    if (!image_file) {
+        fprintf(stderr, "Could not read image file \"%s\"\n", input_image);
+        exit(EXIT_FAILURE);
+    }
+    unsigned long image_file_length = file_length(image_file);
+    char* image_file_buffer = load_file(image_file, image_file_length);
+    nj_result_t result = njDecode(image_file_buffer, image_file_length);
+    check_result_ok(result, "Loading image");
 
     // 7. Close session to release resources
     fclose(pb_file);
-    free(buffer);
+    free(pb_file_buffer);
+    njDone(); // resets NanoJPEG's internal state and frees memory
     return EXIT_SUCCESS;
 }
